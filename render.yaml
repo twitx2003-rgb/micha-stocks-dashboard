@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: micha-stocks-dashboard
+    runtime: docker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+    disk:
+      name: dashboard-data
+      mountPath: /app/data
+      sizeGB: 1

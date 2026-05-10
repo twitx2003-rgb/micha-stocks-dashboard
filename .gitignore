@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+deploy/
+screenshots/
+data/*.pid
+data/last-analysis.json
+npm-debug.log*
+.env
+.DS_Store

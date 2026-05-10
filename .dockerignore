@@ -1,0 +1,7 @@
+node_modules
+.npm-cache
+screenshots
+data/*.pid
+npm-debug.log
+.git
+.DS_Store

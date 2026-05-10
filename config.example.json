@@ -1,0 +1,89 @@
+{
+  "youtube": {
+    "channelId": "UCSxjNbPriyBh9RNl_QNSAtw",
+    "channelUrl": "https://www.youtube.com/@Micha.Stocks"
+  },
+  "watchlist": [
+    "NASDAQ:AAPL",
+    "NASDAQ:NVDA",
+    "NASDAQ:MSFT"
+  ],
+  "market": {
+    "defaultExchange": "NASDAQ",
+    "maxVideos": 24
+  },
+  "universe": {
+    "enabled": true,
+    "exchanges": ["NASDAQ", "NYSE"],
+    "includeAllSecurityTypes": true
+  },
+  "research": {
+    "useTranscripts": true,
+    "maxTranscriptVideos": 16,
+    "maxQualityIdeas": 160,
+    "maxAnalyzedIdeas": 80,
+    "minQualityScore": 1,
+    "includeManualWatchlist": false,
+    "minDynamicTechnicalScore": 1,
+    "useCompanyNameMatching": true
+  },
+  "marketScout": {
+    "enabled": true,
+    "minCandidateIdeas": 50,
+    "expansionSymbols": [
+      "NASDAQ:TSLA",
+      "NASDAQ:META",
+      "NASDAQ:GOOGL",
+      "NASDAQ:AMZN",
+      "NASDAQ:AVGO",
+      "NASDAQ:SMCI",
+      "NASDAQ:PLTR",
+      "NASDAQ:ARM",
+      "NASDAQ:CRWD",
+      "NASDAQ:COIN",
+      "NASDAQ:HOOD",
+      "NASDAQ:SOFI",
+      "NASDAQ:RKLB",
+      "NASDAQ:ASTS",
+      "NASDAQ:APP",
+      "NASDAQ:MU",
+      "NASDAQ:MRVL",
+      "NASDAQ:QCOM",
+      "NASDAQ:INTC",
+      "NYSE:ORCL",
+      "NYSE:CRM",
+      "NYSE:DELL",
+      "NYSE:NET",
+      "NYSE:SNOW",
+      "NYSE:UBER",
+      "NYSE:SHOP",
+      "NYSE:RBLX",
+      "NYSE:U",
+      "NYSE:AI",
+      "NYSE:IONQ"
+    ]
+  },
+  "sessions": [
+    {
+      "id": "morning",
+      "label": "סרטוני בוקר",
+      "keywords": ["בוקר", "פתיחת מסחר", "לפני המסחר", "pre market", "premarket"],
+      "startHour": 5,
+      "endHour": 11
+    },
+    {
+      "id": "noon",
+      "label": "לייב צהריים",
+      "keywords": ["צהריים", "לייב צהריים", "live noon", "midday"],
+      "startHour": 11,
+      "endHour": 17
+    },
+    {
+      "id": "evening",
+      "label": "לייב ערב",
+      "keywords": ["ערב", "לייב ערב", "סיכום יום", "נעילת מסחר", "live evening"],
+      "startHour": 17,
+      "endHour": 23
+    }
+  ]
+}

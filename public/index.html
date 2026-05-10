@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>מעקב מניות מיוטיוב ו-TradingView</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Micha.Stocks Intelligence</p>
+          <h1>צ׳ק ליסט דינמי ממחקר תמלולים וניתוח טכני</h1>
+        </div>
+        <button id="refreshBtn" class="primary">רענון</button>
+      </section>
+
+      <section class="command-bar" aria-label="מרכז שליטה">
+        <div class="command-metric">
+          <span>Universe</span>
+          <strong id="universeTitle">טוען...</strong>
+          <small id="universeMeta">NYSE / NASDAQ</small>
+        </div>
+        <div class="command-metric">
+          <span>מקור</span>
+          <strong>Micha.Stocks</strong>
+          <small>בוקר · צהריים · ערב</small>
+        </div>
+        <div class="command-actions">
+          <button id="refreshUniverseBtn">רענן Universe</button>
+          <button id="settingsToggle">הגדרות</button>
+        </div>
+      </section>
+
+      <section class="setup collapsed" id="settingsPanel" aria-label="הגדרות ערוץ">
+        <label>
+          מזהה ערוץ YouTube
+          <input id="channelId" placeholder="לדוגמה: UCxxxxxxxxxxxxxxxxxxxxxx" />
+        </label>
+        <label>
+          רשימת עדיפות ידנית (לא נכנסת אוטומטית)
+          <input id="watchlist" placeholder="NASDAQ:NVDA, NASDAQ:AAPL" />
+        </label>
+        <button id="saveBtn">שמירה</button>
+      </section>
+
+      <section class="status" id="status">טוען נתונים...</section>
+
+      <section class="workspace">
+        <aside class="ideas">
+          <div class="section-title">
+            <h2>צ׳ק ליסט דינמי</h2>
+            <span id="videoCount">0 סרטונים</span>
+          </div>
+          <div class="list-summary" id="listSummary">ממתין למחקר...</div>
+          <label class="search-wrap" aria-label="חיפוש מניה">
+            <span>חיפוש מהיר</span>
+            <input id="ideaSearch" placeholder="סימול, חברה או סיבה" autocomplete="off" />
+          </label>
+          <div id="ideaFilters" class="idea-filters" aria-label="סינון רשימת מניות"></div>
+          <div id="sessionTabs" class="session-tabs" aria-label="סינון לפי זמן שידור"></div>
+          <div id="ideasList" class="ideas-list"></div>
+        </aside>
+
+        <section class="chart-panel">
+          <div class="section-title">
+            <h2 id="selectedTitle">TradingView</h2>
+            <a id="selectedLink" target="_blank" rel="noreferrer">פתיחה ב-TradingView</a>
+          </div>
+          <div id="tradingviewChart" class="chart"></div>
+          <div class="analysis-panel">
+            <div class="section-title">
+              <h2>גרף טכני עם קווי ניתוח</h2>
+              <button id="analysisBtn">רענן ניתוח</button>
+            </div>
+            <canvas id="technicalCanvas" class="technical-canvas" width="960" height="360"></canvas>
+            <div id="analysisOutput" class="analysis-output">בחר מניה כדי לראות ניתוח טכני אוטומטי.</div>
+          </div>
+          <div class="video-strip" id="videoStrip"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
