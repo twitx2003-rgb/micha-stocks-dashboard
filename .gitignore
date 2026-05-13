@@ -1,7 +1,12 @@
 node_modules/
 .npm-cache/
+dist/
 deploy/
+UPLOAD_TO_GITHUB_RENDER/
+*.zip
 screenshots/
+data/
+data/cache/
 data/*.pid
 data/last-analysis.json
 npm-debug.log*

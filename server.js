@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+﻿import { createServer } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
@@ -7,10 +7,17 @@ import { networkInterfaces } from "node:os";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
+const distDir = join(__dirname, "dist");
 const dataDir = join(__dirname, "data");
+const cacheDir = join(dataDir, "cache");
 const configPath = join(__dirname, "config.json");
 const universePath = join(dataDir, "universe.json");
 const analysisSnapshotPath = join(dataDir, "last-analysis.json");
+const dashboardCachePath = join(cacheDir, "dashboard.json");
+const ideasCachePath = join(cacheDir, "ideas.json");
+const analysisSummaryCachePath = join(cacheDir, "analysis-summary.json");
+const dailyNewsCachePath = join(cacheDir, "daily-news.json");
+const refreshStatePath = join(cacheDir, "refresh-state.json");
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
 
@@ -48,6 +55,15 @@ async function readJson(path) {
 async function writeJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(value, null, 2) + "\n", "utf8");
+}
+
+async function readJsonSafe(path, fallback = null) {
+  try {
+    if (!existsSync(path)) return fallback;
+    return await readJson(path);
+  } catch {
+    return fallback;
+  }
 }
 
 function escapeXml(value = "") {
@@ -268,7 +284,7 @@ function normalizeCompanyText(value = "") {
   return value
     .toLowerCase()
     .replace(/&amp;/g, " and ")
-    .replace(/[^a-z0-9א-ת]+/g, " ")
+    .replace(/[^a-z0-9׳-׳×]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -365,15 +381,15 @@ function qualityScore(contexts, mentions) {
     "moving average",
     "sma",
     "ema",
-    "פריצה",
-    "התנגדות",
-    "תמיכה",
-    "מגמה",
-    "מחזור",
-    "ממוצע",
-    "חזקה",
-    "מומנטום",
-    "מעקב"
+    "׳₪׳¨׳™׳¦׳”",
+    "׳”׳×׳ ׳’׳“׳•׳×",
+    "׳×׳׳™׳›׳”",
+    "׳׳’׳׳”",
+    "׳׳—׳–׳•׳¨",
+    "׳׳׳•׳¦׳¢",
+    "׳—׳–׳§׳”",
+    "׳׳•׳׳ ׳˜׳•׳",
+    "׳׳¢׳§׳‘"
   ];
   const contextText = contexts.join(" ").toLowerCase();
   const signalCount = signalWords.filter((word) => contextText.includes(word.toLowerCase())).length;
@@ -432,11 +448,26 @@ async function fetchTranscript(videoId) {
   if (!page.ok) throw new Error(`Video page returned ${page.status}`);
   const captionTrack = extractCaptionTrack(await page.text());
   if (!captionTrack?.baseUrl) throw new Error("No public transcript found");
-  const transcript = await fetch(`${captionTrack.baseUrl}&fmt=srv3`, {
-    headers: { "user-agent": "local-tradingview-youtube-dashboard" }
-  });
-  if (!transcript.ok) throw new Error(`Transcript returned ${transcript.status}`);
-  return parseTranscriptXml(await transcript.text());
+
+  const headers = { "user-agent": "local-tradingview-youtube-dashboard" };
+  const formats = ["srv3", "srv1"];
+  let lastStatus = null;
+
+  for (const fmt of formats) {
+    const response = await fetch(`${captionTrack.baseUrl}&fmt=${fmt}`, { headers });
+    lastStatus = response.status;
+    if (!response.ok) continue;
+    const parsed = parseTranscriptXml(await response.text());
+    if (parsed) return parsed;
+  }
+
+  // Some videos expose transcripts only without a fmt parameter.
+  const fallback = await fetch(captionTrack.baseUrl, { headers });
+  lastStatus = fallback.status;
+  if (!fallback.ok) throw new Error(`Transcript returned ${lastStatus}`);
+  const parsed = parseTranscriptXml(await fallback.text());
+  if (parsed) return parsed;
+  throw new Error("Transcript was empty");
 }
 
 async function enrichVideosWithTranscripts(videos, config) {
@@ -473,7 +504,9 @@ function transcriptIdeas(videos, config, sessionId = "all", universe = null) {
   const tickerMap = new Map();
   const index = universeIndex(universe);
   for (const video of scopedVideos) {
-    const researchText = [video.title, video.transcript || ""].join(" ");
+    const transcriptText = video.transcript || "";
+    const hasTranscript = Boolean(transcriptText && transcriptText.trim());
+    const researchText = [video.title, transcriptText].join(" ");
     const rawTickers = extractTickers(researchText, config.market.defaultExchange);
     const companyMentions = config.research?.useCompanyNameMatching
       ? extractUniverseCompanyMentions(researchText, universe)
@@ -496,9 +529,11 @@ function transcriptIdeas(videos, config, sessionId = "all", universe = null) {
         contexts: [],
         transcriptMentions: 0,
         qualityScore: 0,
-        sourceType: "transcript"
+        sourceType: hasTranscript ? "transcript" : "title"
       };
-      const contexts = transcriptQualityContext(researchText, ticker);
+      if (hasTranscript) current.sourceType = "transcript";
+      const contextBase = hasTranscript ? transcriptText : video.title;
+      const contexts = transcriptQualityContext(contextBase, ticker);
       const aliasContexts = candidate.alias ? transcriptQualityContext(researchText, candidate.alias) : [];
       const allContexts = [...contexts, ...aliasContexts];
       current.mentions += 1;
@@ -507,10 +542,10 @@ function transcriptIdeas(videos, config, sessionId = "all", universe = null) {
       current.contexts.push(...allContexts);
       current.notes.push(
         allContexts[0]
-          ? `הוזכר בתמלול: "${allContexts[0].slice(0, 180)}"`
+          ? `הוזכר בטקסט זמין: "${allContexts[0].slice(0, 180)}"`
           : candidate.alias
-            ? `זוהה לפי שם חברה: "${candidate.alias}" בסרטון "${video.title}"`
-            : `הוזכר בסרטון: "${video.title}"`
+            ? `׳–׳•׳”׳” ׳׳₪׳™ ׳©׳ ׳—׳‘׳¨׳”: "${candidate.alias}" ׳‘׳¡׳¨׳˜׳•׳ "${video.title}"`
+            : `׳”׳•׳–׳›׳¨ ׳‘׳¡׳¨׳˜׳•׳: "${video.title}"`
       );
       current.sessions.add(video.session?.label || "כללי");
       tickerMap.set(ticker, current);
@@ -579,7 +614,7 @@ function summarize(videos, config, sessionId = "all", universe = null) {
       };
       current.mentions += 1;
       current.videos.push(video);
-      current.notes.push(`הוזכר בכותרת: "${video.title}"`);
+      current.notes.push(`׳”׳•׳–׳›׳¨ ׳‘׳›׳•׳×׳¨׳×: "${video.title}"`);
       current.sessions.add(video.session?.label || "כללי");
       tickerMap.set(ticker, current);
     }
@@ -591,7 +626,7 @@ function summarize(videos, config, sessionId = "all", universe = null) {
         symbol,
         mentions: tickerMap.get(symbol)?.mentions || 0,
         videos: tickerMap.get(symbol)?.videos || [],
-        notes: tickerMap.get(symbol)?.notes || ["ברשימת המעקב הידנית"],
+        notes: tickerMap.get(symbol)?.notes || ["׳‘׳¨׳©׳™׳׳× ׳”׳׳¢׳§׳‘ ׳”׳™׳“׳ ׳™׳×"],
         sessions: [...(tickerMap.get(symbol)?.sessions || [])],
         manual: true,
         sourceType: "manual"
@@ -780,24 +815,24 @@ function buildEntryReason({ sourceIdea, setup, support, resistance, last, signal
     sourceIdea?.contexts?.[0] ||
     sourceIdea?.notes?.[0] ||
     (sourceIdea?.scout
-      ? "המניה נוספה לסריקה רחבה כי הרשימה שעלתה מהסרטונים הייתה צרה מדי."
-      : "המניה זוהתה כמועמדת מתוך מקורות המחקר של היום.");
+      ? "׳”׳׳ ׳™׳” ׳ ׳•׳¡׳₪׳” ׳׳¡׳¨׳™׳§׳” ׳¨׳—׳‘׳” ׳›׳™ ׳”׳¨׳©׳™׳׳” ׳©׳¢׳׳×׳” ׳׳”׳¡׳¨׳˜׳•׳ ׳™׳ ׳”׳™׳™׳×׳” ׳¦׳¨׳” ׳׳“׳™."
+      : "׳”׳׳ ׳™׳” ׳–׳•׳”׳×׳” ׳›׳׳•׳¢׳׳“׳× ׳׳×׳•׳ ׳׳§׳•׳¨׳•׳× ׳”׳׳—׳§׳¨ ׳©׳ ׳”׳™׳•׳.");
   const distance =
     setup.breakoutDistancePct === null ? null : `${setup.breakoutDistancePct.toFixed(2)}%`;
-  const technical = signals.slice(0, 3).join(" · ") || "נבדקת מול ממוצעים, מומנטום, תמיכה והתנגדות.";
+  const technical = signals.slice(0, 3).join(" ֲ· ") || "׳ ׳‘׳“׳§׳× ׳׳•׳ ׳׳׳•׳¦׳¢׳™׳, ׳׳•׳׳ ׳˜׳•׳, ׳×׳׳™׳›׳” ׳•׳”׳×׳ ׳’׳“׳•׳×.";
   return {
     source: sourceLabel(sourceIdea),
     evidence,
     technical,
-    trigger: resistance ? `פריצה/סגירה מעל ${resistance.toFixed(2)}` : "טריגר ייקבע אחרי עוד נתוני מחיר",
-    invalidation: support ? `איבוד אזור ${support.toFixed(2)}` : "אין עדיין אזור ביטול יציב",
+    trigger: resistance ? `׳₪׳¨׳™׳¦׳”/׳¡׳’׳™׳¨׳” ׳׳¢׳ ${resistance.toFixed(2)}` : "׳˜׳¨׳™׳’׳¨ ׳™׳™׳§׳‘׳¢ ׳׳—׳¨׳™ ׳¢׳•׳“ ׳ ׳×׳•׳ ׳™ ׳׳—׳™׳¨",
+    invalidation: support ? `׳׳™׳‘׳•׳“ ׳׳–׳•׳¨ ${support.toFixed(2)}` : "׳׳™׳ ׳¢׳“׳™׳™׳ ׳׳–׳•׳¨ ׳‘׳™׳˜׳•׳ ׳™׳¦׳™׳‘",
     strengthen:
       distance !== null
-        ? `מעקב אם המחיר מתקרב לפריצה, כרגע המרחק מההתנגדות הוא ${distance}.`
-        : "מעקב אחרי שיפור מומנטום ומבנה מחירים.",
+        ? `׳׳¢׳§׳‘ ׳׳ ׳”׳׳—׳™׳¨ ׳׳×׳§׳¨׳‘ ׳׳₪׳¨׳™׳¦׳”, ׳›׳¨׳’׳¢ ׳”׳׳¨׳—׳§ ׳׳”׳”׳×׳ ׳’׳“׳•׳× ׳”׳•׳ ${distance}.`
+        : "׳׳¢׳§׳‘ ׳׳—׳¨׳™ ׳©׳™׳₪׳•׳¨ ׳׳•׳׳ ׳˜׳•׳ ׳•׳׳‘׳ ׳” ׳׳—׳™׳¨׳™׳.",
     plain: sourceIdea?.mentions > 0
-      ? `נכנסה כי הופיעה בתוכן הערוץ ${sourceIdea.mentions} פעמים ועברה בדיקה טכנית יומית.`
-      : "נכנסה כי סריקת השוק הרחבה מצאה מבנה טכני שראוי לבדיקה היום."
+      ? `׳ ׳›׳ ׳¡׳” ׳›׳™ ׳”׳•׳₪׳™׳¢׳” ׳‘׳×׳•׳›׳ ׳”׳¢׳¨׳•׳¥ ${sourceIdea.mentions} ׳₪׳¢׳׳™׳ ׳•׳¢׳‘׳¨׳” ׳‘׳“׳™׳§׳” ׳˜׳›׳ ׳™׳× ׳™׳•׳׳™׳×.`
+      : "׳ ׳›׳ ׳¡׳” ׳›׳™ ׳¡׳¨׳™׳§׳× ׳”׳©׳•׳§ ׳”׳¨׳—׳‘׳” ׳׳¦׳׳” ׳׳‘׳ ׳” ׳˜׳›׳ ׳™ ׳©׳¨׳׳•׳™ ׳׳‘׳“׳™׳§׳” ׳”׳™׳•׳."
   };
 }
 
@@ -825,18 +860,18 @@ function technicalSummary(symbol, points, sourceIdea = null) {
 
   const signals = [];
   if (ma20 && ma50) {
-    signals.push(ma20 > ma50 ? "המניה מעל מבנה ממוצעים חיובי" : "המניה עדיין מתחת למבנה ממוצעים אידיאלי");
+    signals.push(ma20 > ma50 ? "׳”׳׳ ׳™׳” ׳׳¢׳ ׳׳‘׳ ׳” ׳׳׳•׳¦׳¢׳™׳ ׳—׳™׳•׳‘׳™" : "׳”׳׳ ׳™׳” ׳¢׳“׳™׳™׳ ׳׳×׳—׳× ׳׳׳‘׳ ׳” ׳׳׳•׳¦׳¢׳™׳ ׳׳™׳“׳™׳׳׳™");
   }
   if (rsi14 !== null) {
-    if (rsi14 >= 70) signals.push("RSI גבוה: יש מומנטום, אבל גם רגישות לתיקון");
-    else if (rsi14 <= 30) signals.push("RSI נמוך: המניה חלשה אך עשויה להיכנס למעקב התאוששות");
-    else signals.push("RSI בתחום עבודה תקין למעקב");
+    if (rsi14 >= 70) signals.push("RSI ׳’׳‘׳•׳”: ׳™׳© ׳׳•׳׳ ׳˜׳•׳, ׳׳‘׳ ׳’׳ ׳¨׳’׳™׳©׳•׳× ׳׳×׳™׳§׳•׳");
+    else if (rsi14 <= 30) signals.push("RSI ׳ ׳׳•׳: ׳”׳׳ ׳™׳” ׳—׳׳©׳” ׳׳ ׳¢׳©׳•׳™׳” ׳׳”׳™׳›׳ ׳¡ ׳׳׳¢׳§׳‘ ׳”׳×׳׳•׳©׳©׳•׳×");
+    else signals.push("RSI ׳‘׳×׳—׳•׳ ׳¢׳‘׳•׳“׳” ׳×׳§׳™׳ ׳׳׳¢׳§׳‘");
   }
   if (macdValue !== null) {
-    signals.push(macdValue >= 0 ? "MACD חיובי" : "MACD שלילי");
+    signals.push(macdValue >= 0 ? "MACD ׳—׳™׳•׳‘׳™" : "MACD ׳©׳׳™׳׳™");
   }
   if (setup.breakoutDistancePct !== null && setup.breakoutDistancePct <= 5) {
-    signals.push("המחיר קרוב לאזור התנגדות/פריצה");
+    signals.push("׳”׳׳—׳™׳¨ ׳§׳¨׳•׳‘ ׳׳׳–׳•׳¨ ׳”׳×׳ ׳’׳“׳•׳×/׳₪׳¨׳™׳¦׳”");
   }
 
   const entryReason = buildEntryReason({ sourceIdea, setup, support, resistance, last, signals });
@@ -861,12 +896,12 @@ function technicalSummary(symbol, points, sourceIdea = null) {
     sourceType: sourceIdea?.sourceType || (sourceIdea?.scout ? "scout" : "unknown"),
     checklistReason:
       sourceIdea?.mentions > 0
-        ? `נכנסה לצ׳ק ליסט כי הופיעה בתוכן הערוץ ${sourceIdea.mentions} פעמים, ועכשיו נבדקת מול מבנה טכני.`
-        : "נכנסה לצ׳ק ליסט כי היא נמצאת ברשימת המעקב הידנית שלך.",
-    plainSummary: `${setup.label}. הטריגר המרכזי למעקב הוא התמודדות עם אזור ${resistance.toFixed(
+        ? `׳ ׳›׳ ׳¡׳” ׳׳¦׳³׳§ ׳׳™׳¡׳˜ ׳›׳™ ׳”׳•׳₪׳™׳¢׳” ׳‘׳×׳•׳›׳ ׳”׳¢׳¨׳•׳¥ ${sourceIdea.mentions} ׳₪׳¢׳׳™׳, ׳•׳¢׳›׳©׳™׳• ׳ ׳‘׳“׳§׳× ׳׳•׳ ׳׳‘׳ ׳” ׳˜׳›׳ ׳™.`
+        : "׳ ׳›׳ ׳¡׳” ׳׳¦׳³׳§ ׳׳™׳¡׳˜ ׳›׳™ ׳”׳™׳ ׳ ׳׳¦׳׳× ׳‘׳¨׳©׳™׳׳× ׳”׳׳¢׳§׳‘ ׳”׳™׳“׳ ׳™׳× ׳©׳׳.",
+    plainSummary: `${setup.label}. ׳”׳˜׳¨׳™׳’׳¨ ׳”׳׳¨׳›׳–׳™ ׳׳׳¢׳§׳‘ ׳”׳•׳ ׳”׳×׳׳•׳“׳“׳•׳× ׳¢׳ ׳׳–׳•׳¨ ${resistance.toFixed(
       2
-    )}; איבוד אזור ${support.toFixed(2)} יחליש את התמונה הטכנית.`,
-    disclaimer: "ניתוח טכני אוטומטי לצורכי מידע בלבד, לא המלצת השקעה."
+    )}; ׳׳™׳‘׳•׳“ ׳׳–׳•׳¨ ${support.toFixed(2)} ׳™׳—׳׳™׳© ׳׳× ׳”׳×׳׳•׳ ׳” ׳”׳˜׳›׳ ׳™׳×.`,
+    disclaimer: "׳ ׳™׳×׳•׳— ׳˜׳›׳ ׳™ ׳׳•׳˜׳•׳׳˜׳™ ׳׳¦׳•׳¨׳›׳™ ׳׳™׳“׳¢ ׳‘׳׳‘׳“, ׳׳ ׳”׳׳׳¦׳× ׳”׳©׳§׳¢׳”."
   };
 }
 
@@ -914,7 +949,7 @@ function withAnalysisChanges(analysis, previousSnapshot) {
     if (tierDelta < 0 || scoreDelta <= -2) {
       return { ...item, change: { type: "weaker", label: "נחלשה", detail: `ניקוד ${scoreDelta}` } };
     }
-    return { ...item, change: { type: "stable", label: "ללא שינוי חד", detail: `ניקוד ${scoreDelta >= 0 ? "+" : ""}${scoreDelta}` } };
+    return { ...item, change: { type: "stable", label: "ללא שינוי", detail: `ניקוד ${scoreDelta >= 0 ? "+" : ""}${scoreDelta}` } };
   });
   const removed = [...previous.values()]
     .filter((item) => !currentSymbols.has(item.symbol))
@@ -944,6 +979,231 @@ async function saveAnalysisSnapshot(analysis) {
   });
 }
 
+function lightIdea(idea, analysisItem) {
+  const setup = analysisItem?.setup || {};
+  return {
+    symbol: idea.symbol,
+    exchange: idea.exchange,
+    name: idea.name,
+    sourceType: idea.sourceType || (idea.scout ? "scout" : "unknown"),
+    sessions: idea.sessions || [],
+    qualityScore: idea.qualityScore || 0,
+    mentions: idea.mentions || 0,
+    note: idea.notes?.[0] || "",
+    videos: (idea.videos || []).slice(0, 3).map((video) => ({
+      title: video.title,
+      url: video.url,
+      published: video.published,
+      session: video.session
+    })),
+    setup: {
+      score: setup.score || 0,
+      tier: setup.tier || "watch",
+      label: setup.label || "מעקב",
+      isHot: Boolean(setup.isHot),
+      breakoutDistancePct: setup.breakoutDistancePct ?? null
+    },
+    metrics: analysisItem && !analysisItem.error
+      ? {
+          last: analysisItem.last,
+          changePct: analysisItem.changePct,
+          rsi14: analysisItem.rsi14,
+          macd: analysisItem.macd,
+          support: analysisItem.support,
+          resistance: analysisItem.resistance,
+          sma20: analysisItem.sma20,
+          sma50: analysisItem.sma50
+        }
+      : null,
+    change: analysisItem?.change || null,
+    error: analysisItem?.error || null
+  };
+}
+
+function sortLightIdeas(a, b) {
+  const tierDelta = tierRank(b.setup?.tier) - tierRank(a.setup?.tier);
+  if (tierDelta) return tierDelta;
+  const scoreDelta = (b.setup?.score || 0) - (a.setup?.score || 0);
+  if (scoreDelta) return scoreDelta;
+  return (b.qualityScore || 0) - (a.qualityScore || 0);
+}
+
+function buildDashboard({ feed, ideas, analysis, refreshState }) {
+  const working = ideas.filter((idea) => !idea.error);
+  const counts = {
+    videos: feed.videos?.length || 0,
+    candidates: ideas.length,
+    analyzed: analysis.filter((item) => !item.error).length,
+    veryHot: working.filter((idea) => idea.setup?.tier === "very_hot").length,
+    breakout: working.filter((idea) => idea.setup?.tier === "breakout").length,
+    interesting: working.filter((idea) => idea.setup?.tier === "interesting").length
+  };
+  return {
+    updatedAt: new Date().toISOString(),
+    fetchedAt: feed.fetchedAt,
+    channel: "Micha.Stocks",
+    universe: feed.universe,
+    counts,
+    refresh: refreshState,
+    topIdeas: working.slice(0, 10)
+  };
+}
+
+function buildDailyNews(feed, ideas) {
+  const bySession = new Map();
+  for (const video of feed.videos || []) {
+    const key = video.session?.id || "general";
+    if (!bySession.has(key)) {
+      bySession.set(key, {
+        id: key,
+        label: video.session?.label || "כללי",
+        videos: [],
+        symbols: new Set()
+      });
+    }
+    bySession.get(key).videos.push({
+      title: video.title,
+      url: video.url,
+      published: video.published,
+      transcriptStatus: video.transcriptStatus || "unknown"
+    });
+  }
+
+  for (const idea of ideas) {
+    for (const sessionLabel of idea.sessions || []) {
+      const match = [...bySession.values()].find((session) => session.label === sessionLabel);
+      if (match) match.symbols.add(idea.symbol);
+    }
+  }
+
+  const sessions = [...bySession.values()].map((session) => ({
+    ...session,
+    symbols: [...session.symbols].slice(0, 12)
+  }));
+
+  const headlineIdeas = ideas
+    .filter((idea) => ["very_hot", "breakout"].includes(idea.setup?.tier))
+    .slice(0, 12)
+    .map((idea) => ({
+      symbol: idea.symbol,
+      label: idea.setup.label,
+      score: idea.setup.score,
+      source: idea.sourceType,
+      reason: idea.note,
+      videos: idea.videos
+    }));
+
+  return {
+    updatedAt: new Date().toISOString(),
+    title: "חדשות יומיות מהתמלולים",
+    summary: {
+      videos: feed.videos?.length || 0,
+      highlightedSymbols: headlineIdeas.length,
+      transcriptLoaded: (feed.videos || []).filter((video) => video.transcriptStatus === "loaded").length,
+      transcriptMissing: (feed.videos || []).filter((video) => video.transcriptStatus === "missing").length
+    },
+    highlights: headlineIdeas,
+    sessions,
+    disclaimer: "מבוסס על כותרות ותמלולים זמינים מהערוץ בלבד. זהו מידע כללי ולא המלצת השקעה."
+  };
+}
+
+let refreshPromise = null;
+
+async function readRefreshState() {
+  return (
+    (await readJsonSafe(refreshStatePath)) || {
+      status: "idle",
+      lastStartedAt: null,
+      lastFinishedAt: null,
+      lastError: null,
+      version: 0
+    }
+  );
+}
+
+async function writeRefreshState(next) {
+  const current = await readRefreshState();
+  const state = { ...current, ...next };
+  await writeJson(refreshStatePath, state);
+  return state;
+}
+
+async function buildAndCacheAll() {
+  const started = new Date().toISOString();
+  const previous = await readRefreshState();
+  await writeRefreshState({
+    status: "running",
+    lastStartedAt: started,
+    lastError: null
+  });
+
+  try {
+    const config = await readJson(configPath);
+    const feed = await loadFeed();
+    const symbols = [...new Set((feed.ideas || []).map((idea) => idea.symbol))];
+    const previousSnapshot = await readAnalysisSnapshot();
+    const rawAnalysis = await analyzeSymbols(
+      symbols,
+      feed.ideas || [],
+      config.research?.maxAnalyzedIdeas || config.research?.maxQualityIdeas || 40
+    );
+    const { analysis, removed } = withAnalysisChanges(rawAnalysis, previousSnapshot);
+    await saveAnalysisSnapshot(analysis);
+
+    const analysisMap = new Map(analysis.map((item) => [item.symbol, item]));
+    const ideas = (feed.ideas || [])
+      .map((idea) => lightIdea(idea, analysisMap.get(idea.symbol)))
+      .filter((idea) => !idea.error && ((idea.setup?.score || 0) >= (config.research?.minDynamicTechnicalScore ?? 1)))
+      .sort(sortLightIdeas);
+
+    const finishedAt = new Date().toISOString();
+    const completedState = {
+      status: "completed",
+      lastStartedAt: started,
+      lastFinishedAt: finishedAt,
+      lastError: null,
+      version: (previous.version || 0) + 1
+    };
+    const dashboard = buildDashboard({ feed, ideas, analysis, refreshState: completedState });
+    const news = buildDailyNews(feed, ideas);
+
+    await writeJson(ideasCachePath, { updatedAt: finishedAt, items: ideas, removed });
+    await writeJson(analysisSummaryCachePath, { updatedAt: finishedAt, items: analysis });
+    await writeJson(dashboardCachePath, dashboard);
+    await writeJson(dailyNewsCachePath, news);
+    await writeRefreshState(completedState);
+    return completedState;
+  } catch (error) {
+    return writeRefreshState({
+      status: "failed",
+      lastFinishedAt: new Date().toISOString(),
+      lastError: error.message
+    });
+  }
+}
+
+function startBackgroundRefresh() {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = buildAndCacheAll().finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
+async function ensureInitialRefresh() {
+  const dashboard = await readJsonSafe(dashboardCachePath);
+  if (!dashboard && !refreshPromise) {
+    startBackgroundRefresh();
+  }
+}
+
+function omitHistory(item) {
+  if (!item || item.error) return item;
+  const { history, ...rest } = item;
+  return rest;
+}
+
 async function loadFeed() {
   const config = await readJson(configPath);
   const universe = await loadUniverse(config);
@@ -954,7 +1214,7 @@ async function loadFeed() {
       videos: [],
       ideas: summarize([], config, "all", universe),
       universe: universeSummary(universe),
-      message: "צריך להוסיף channelId בקובץ config.json כדי למשוך סרטונים מהערוץ."
+      message: "׳¦׳¨׳™׳ ׳׳”׳•׳¡׳™׳£ channelId ׳‘׳§׳•׳‘׳¥ config.json ׳›׳“׳™ ׳׳׳©׳•׳ ׳¡׳¨׳˜׳•׳ ׳™׳ ׳׳”׳¢׳¨׳•׳¥."
     };
   }
 
@@ -1016,6 +1276,62 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, await loadFeed());
   }
 
+  if (pathname === "/api/dashboard" && req.method === "GET") {
+    await ensureInitialRefresh();
+    const dashboard = await readJsonSafe(dashboardCachePath);
+    const refresh = await readRefreshState();
+    return json(res, 200, dashboard || {
+      updatedAt: null,
+      counts: { videos: 0, candidates: 0, analyzed: 0, veryHot: 0, breakout: 0, interesting: 0 },
+      topIdeas: [],
+      refresh,
+      empty: true,
+      message: "אין עדיין נתונים שמורים. הרענון הראשוני רץ ברקע."
+    });
+  }
+
+  if (pathname === "/api/ideas" && req.method === "GET") {
+    await ensureInitialRefresh();
+    const cache = await readJsonSafe(ideasCachePath, { updatedAt: null, items: [], removed: [] });
+    return json(res, 200, cache);
+  }
+
+  const ideaMatch = pathname.match(/^\/api\/ideas\/([^/]+)$/);
+  if (ideaMatch && req.method === "GET") {
+    await ensureInitialRefresh();
+    const symbol = decodeURIComponent(ideaMatch[1]).toUpperCase();
+    const cache = await readJsonSafe(analysisSummaryCachePath, { items: [] });
+    const item = cache.items.find((entry) => entry.symbol.toUpperCase() === symbol);
+    if (!item) return json(res, 404, { error: "Symbol not found in current analysis" });
+    return json(res, 200, item);
+  }
+
+  if (pathname === "/api/news/daily" && req.method === "GET") {
+    await ensureInitialRefresh();
+    const news = await readJsonSafe(dailyNewsCachePath);
+    return json(res, 200, news || {
+      updatedAt: null,
+      title: "חדשות יומיות מהתמלולים",
+      summary: { videos: 0, highlightedSymbols: 0, transcriptLoaded: 0, transcriptMissing: 0 },
+      highlights: [],
+      sessions: [],
+      disclaimer: "אין עדיין חדשות שמורות. הרענון הראשוני רץ ברקע."
+    });
+  }
+
+  if (pathname === "/api/refresh/status" && req.method === "GET") {
+    return json(res, 200, await readRefreshState());
+  }
+
+  if (pathname === "/api/refresh" && req.method === "POST") {
+    const state = await readRefreshState();
+    if (refreshPromise) {
+      return json(res, 202, state);
+    }
+    startBackgroundRefresh();
+    return json(res, 202, await readRefreshState());
+  }
+
   if (pathname === "/api/universe" && req.method === "GET") {
     const config = await readJson(configPath);
     return json(res, 200, universeSummary(await loadUniverse(config)));
@@ -1053,8 +1369,12 @@ async function handleApi(req, res, pathname) {
 
 async function serveStatic(req, res, pathname) {
   const safePath = pathname === "/" ? "/index.html" : pathname;
-  const target = resolve(publicDir, `.${safePath}`);
-  if (!target.startsWith(resolve(publicDir)) || !existsSync(target)) {
+  const staticDir = existsSync(distDir) ? distDir : publicDir;
+  let target = resolve(staticDir, `.${safePath}`);
+  if (!target.startsWith(resolve(staticDir)) || !existsSync(target)) {
+    target = resolve(staticDir, "./index.html");
+  }
+  if (!target.startsWith(resolve(staticDir)) || !existsSync(target)) {
     return send(res, 404, "Not found", "text/plain; charset=utf-8");
   }
 
@@ -1062,20 +1382,43 @@ async function serveStatic(req, res, pathname) {
   send(res, 200, body, contentTypes[extname(target)] || "application/octet-stream");
 }
 
-createServer(async (req, res) => {
+export {
+  analyzeSymbols,
+  loadFeed,
+  readAnalysisSnapshot,
+  saveAnalysisSnapshot,
+  technicalSummary,
+  transcriptIdeas,
+  summarize,
+  startBackgroundRefresh
+};
+
+const isMain = (() => {
   try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    if (url.pathname.startsWith("/api/")) {
-      await handleApi(req, res, url.pathname);
-      return;
+    const entry = process.argv?.[1];
+    if (!entry) return false;
+    return resolve(entry) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+
+if (isMain) {
+  createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (url.pathname.startsWith("/api/")) {
+        await handleApi(req, res, url.pathname);
+        return;
+      }
+      await serveStatic(req, res, url.pathname);
+    } catch (error) {
+      json(res, 500, { error: error.message });
     }
-    await serveStatic(req, res, url.pathname);
-  } catch (error) {
-    json(res, 500, { error: error.message });
-  }
-}).listen(port, host, () => {
-  console.log(`Local dashboard running at http://localhost:${port}`);
-  for (const url of localNetworkUrls()) {
-    console.log(`Phone URL on the same Wi-Fi: ${url}`);
-  }
-});
+  }).listen(port, host, () => {
+    console.log(`Local dashboard running at http://localhost:${port}`);
+    for (const url of localNetworkUrls()) {
+      console.log(`Phone URL on the same Wi-Fi: ${url}`);
+    }
+  });
+}

@@ -8,9 +8,10 @@ const requiredFiles = [
   "render.yaml",
   "railway.json",
   "config.json",
-  "public/index.html",
-  "public/app.js",
-  "public/styles.css"
+  "index.html",
+  "vite.config.js",
+  "src/App.jsx",
+  "src/styles.css"
 ];
 
 for (const file of requiredFiles) {
